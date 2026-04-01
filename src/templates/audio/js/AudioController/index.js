@@ -4,6 +4,8 @@ import { PluginManager } from './managers/PluginManager.js';
 import { RegionManager } from './managers/RegionManager.js';
 import { FileInfoManager } from './managers/FileInfoManager.js';
 import { EventManager } from './managers/EventManager.js';
+import { AnalysisWorkerManager } from './managers/AnalysisWorkerManager.js';
+import { VisualizationManager } from './managers/VisualizationManager.js';
 import { DOMUtils } from './utils/DOMUtils.js';
 import { AudioUtils } from './utils/AudioUtils.js';
 
@@ -12,6 +14,9 @@ export class AudioController {
         this.vscode = acquireVsCodeApi();
         this.audioSrc = '{{audioSrc}}';
         this.audioMetadata = DOMUtils.getMetadata();
+        this.audioArrayBuffer = null;
+        this.audioArrayBufferPromise = null;
+        this.handleWindowUnload = this.handleWindowUnload.bind(this);
         
         // Initialize state
         this.state = {
@@ -23,7 +28,10 @@ export class AudioController {
             loopEnabled: false,
             isSetupComplete: false,
             audioContextInitialized: false,
+            mediaLoaded: false,
             selectedRegionId: null,
+            activePlaybackRegion: null,
+            pendingPlaybackTime: 0,
             regionStartOverlay: null,
             regionEndOverlay: null,
             elements: DOMUtils.getElements()
@@ -36,16 +44,22 @@ export class AudioController {
         this.fileInfoManager = new FileInfoManager(this.state, this.audioMetadata);
         this.pluginManager = new PluginManager(this.state, this.waveSurferManager);
         this.eventManager = new EventManager(this.state, this.audioContextManager, this.regionManager);
+        this.analysisWorkerManager = new AnalysisWorkerManager(this.state);
+        this.visualizationManager = new VisualizationManager(this.state, this.analysisWorkerManager);
 
         // Set references in state for managers that need them
         this.state.audioContextManager = this.audioContextManager;
         this.state.regionManager = this.regionManager;
         this.state.fileInfoManager = this.fileInfoManager;
         this.state.pluginManager = this.pluginManager;
+        this.state.analysisWorkerManager = this.analysisWorkerManager;
+        this.state.visualizationManager = this.visualizationManager;
         this.state.audioController = this;
         
         // Initialize download functionality
         this.setupDownloadButton();
+        window.addEventListener('beforeunload', this.handleWindowUnload);
+        window.addEventListener('pagehide', this.handleWindowUnload);
     }
 
     async initAudioViewer() {
@@ -61,10 +75,12 @@ export class AudioController {
             const loadAudio = async () => {
                 try {
                     this.state.isSetupComplete = false;
+                    this.analysisWorkerManager.isReady = false;
+                    this.visualizationManager.reset();
                     
                     // Clear existing regions before loading new audio
                     this.regionManager.clearAllRegions();
-                    
+
                     await this.state.wavesurfer.load(this.audioSrc);
                     
                     await new Promise(resolve => setTimeout(resolve, 100));
@@ -83,7 +99,7 @@ export class AudioController {
                 } catch (error) {
                     console.warn('Preload failed:', error);
                     AudioUtils.showStatus('Preload failed: ' + error.message, this.state.elements.status);
-                    this.setupUserInteractionHandler();
+                    setupUserInteractionHandler();
                 }
             };
 
@@ -112,30 +128,20 @@ export class AudioController {
 
             // 키보드 이벤트를 먼저 등록하여 사용자가 바로 스페이스바를 사용할 수 있도록 함
             this.eventManager.setupKeyboardEvents();
-            
-            preloadAudio();
-            
-            const setupAfterDecode = async () => {
+
+            const setupAfterReady = async () => {
                 if (this.state.isSetupComplete) return;
                 
-                console.log('Setting up audio viewer after decode...');
+                console.log('Setting up audio viewer after ready...');
                 this.state.isSetupComplete = true;
-                
-                await this.pluginManager.setupSpectrogram();
                 await this.pluginManager.setupTimeline();
                 await this.pluginManager.setupRegions();
 
                 // Hide loading, show content
                 this.state.elements.loading.style.display = 'none';
+                this.state.elements.analysisViewport.style.display = 'block';
                 this.state.elements.waveform.style.display = 'block';
                 this.state.elements.spectrogram.style.display = 'block';
-                
-                // Force spectrogram redraw
-                if (this.state.spectrogramPlugin) {
-                    setTimeout(() => {
-                        this.state.spectrogramPlugin.render();
-                    }, 100);
-                }
                 
                 // Set up event listeners
                 console.log('Setting up event listeners...');
@@ -144,27 +150,20 @@ export class AudioController {
                 this.eventManager.setupVolume();
                 this.eventManager.setupLoop();
                 this.eventManager.setupSpectrogramScale();
+                this.eventManager.setupSeekInteractions();
                 this.eventManager.setupWaveSurferEvents();
                 console.log('Event listeners setup complete');
                 
                 // Update info
                 this.fileInfoManager.updateDuration();
                 this.fileInfoManager.updateFileInfo();
-                
-                setTimeout(() => {
-                    if (this.state.spectrogramPlugin) {
-                        try {
-                            AudioUtils.log('Spectrogram frequency range check...');
-                            AudioUtils.log('Sample rate: ' + (this.state.wavesurfer.getDecodedData()?.sampleRate || 'unknown'));
-                            AudioUtils.log('FFT size: ' + (this.state.spectrogramPlugin.params?.fftSize || 'unknown'));
-                        } catch (error) {
-                            console.warn('Error checking spectrogram frequency range:', error);
-                        }
-                    }
-                }, 1000);
+
+                this.startBackgroundAnalysis();
             };
 
-            this.state.wavesurfer.on('decode', setupAfterDecode);
+            this.state.wavesurfer.on('ready', setupAfterReady);
+
+            preloadAudio();
             
         } catch (error) {
             console.error('Error loading audio:', error);
@@ -179,6 +178,72 @@ export class AudioController {
                 this.state.elements.error.textContent += '\n\nFile is too large. Try a smaller audio file.';
             }
         }
+    }
+
+    async startBackgroundAnalysis() {
+        try {
+            AudioUtils.showStatus('Generating waveform and spectrogram...', this.state.elements.status);
+            const audioArrayBuffer = await this.getAudioArrayBuffer();
+            const result = await this.analysisWorkerManager.decodeInBackground(
+                audioArrayBuffer,
+                this.audioContextManager,
+                this.audioMetadata
+            );
+            this.visualizationManager.initialize(result.duration || this.state.wavesurfer.getDuration());
+            this.fileInfoManager.updateDuration(result.duration);
+            this.fileInfoManager.updateFileInfo();
+            AudioUtils.showStatus('Waveform and spectrogram ready', this.state.elements.status);
+        } catch (error) {
+            console.warn('Background analysis failed:', error);
+            AudioUtils.showStatus('Analysis failed: ' + error.message, this.state.elements.status);
+        } finally {
+            this.releaseAudioArrayBuffer();
+        }
+    }
+
+    async getAudioArrayBuffer() {
+        if (this.audioArrayBuffer) {
+            return this.audioArrayBuffer;
+        }
+
+        if (this.audioArrayBufferPromise) {
+            return this.audioArrayBufferPromise;
+        }
+
+        this.audioArrayBufferPromise = (async () => {
+            const response = await fetch(this.audioSrc);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch audio resource: ${response.status} ${response.statusText}`);
+            }
+
+            this.audioArrayBuffer = await response.arrayBuffer();
+            return this.audioArrayBuffer;
+        })().catch((error) => {
+            this.audioArrayBufferPromise = null;
+            throw error;
+        });
+
+        return this.audioArrayBufferPromise;
+    }
+
+    releaseAudioArrayBuffer() {
+        this.audioArrayBuffer = null;
+        this.audioArrayBufferPromise = null;
+    }
+
+    async getSourceDecodedData() {
+        const decodedData = this.state.analysisWorkerManager?.getDecodedData();
+        if (decodedData) {
+            return decodedData;
+        }
+
+        const audioArrayBuffer = await this.getAudioArrayBuffer();
+        const sourceDecodedData = await this.analysisWorkerManager.ensureDecodedData(
+            audioArrayBuffer,
+            this.audioContextManager
+        );
+        this.releaseAudioArrayBuffer();
+        return sourceDecodedData;
     }
 
     initialize() {
@@ -481,8 +546,8 @@ export class AudioController {
             const endTime = region.end;
             const duration = endTime - startTime;
 
-            // Get decoded audio data
-            const decodedData = this.state.wavesurfer.getDecodedData();
+            // Use the real decoded source audio, not placeholder peaks from WaveSurfer
+            const decodedData = await this.getSourceDecodedData();
             if (!decodedData) {
                 throw new Error('Audio data not available');
             }
@@ -513,74 +578,94 @@ export class AudioController {
                 channelData.set(channels[channel]);
             }
 
-            // Convert AudioBuffer to WAV
-            const wav = this.audioBufferToWav(audioBuffer);
-            const blob = new Blob([wav], { type: 'audio/wav' });
-
-            // Generate filename
-            const baseFileName = this.extractFileNameFromUrl(this.audioSrc) || 'audio_file';
-            const nameWithoutExt = baseFileName.replace(/\.[^/.]+$/, '');
-            const fileName = `${nameWithoutExt}_${startTime.toFixed(2)}s-${endTime.toFixed(2)}s.wav`;
-
-            // Try VSCode extension method first (shows save dialog)
             try {
-                // Convert blob to base64 for VSCode extension
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                    const base64data = reader.result.split(',')[1]; // Remove data:audio/wav;base64, prefix
-                    
-                    this.vscode.postMessage({
-                        command: 'saveRegionFile',
-                        fileName: fileName,
-                        blob: base64data,
-                        mimeType: 'audio/wav',
-                        duration: duration.toFixed(2),
-                        startTime: startTime.toFixed(2),
-                        endTime: endTime.toFixed(2)
+                // Convert AudioBuffer to WAV
+                const wav = this.audioBufferToWav(audioBuffer);
+                const blob = new Blob([wav], { type: 'audio/wav' });
+
+                // Generate filename
+                const baseFileName = this.extractFileNameFromUrl(this.audioSrc) || 'audio_file';
+                const nameWithoutExt = baseFileName.replace(/\.[^/.]+$/, '');
+                const fileName = `${nameWithoutExt}_${startTime.toFixed(2)}s-${endTime.toFixed(2)}s.wav`;
+
+                // Try VSCode extension method first (shows save dialog)
+                try {
+                    // Convert blob to base64 for VSCode extension
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        const base64data = reader.result.split(',')[1]; // Remove data:audio/wav;base64, prefix
+                        
+                        this.vscode.postMessage({
+                            command: 'saveRegionFile',
+                            fileName: fileName,
+                            blob: base64data,
+                            mimeType: 'audio/wav',
+                            duration: duration.toFixed(2),
+                            startTime: startTime.toFixed(2),
+                            endTime: endTime.toFixed(2)
+                        });
+                        
+                        AudioUtils.showStatus(`저장 중... (${duration.toFixed(2)}초)`, this.state.elements.status);
+                    };
+                    reader.onerror = () => {
+                        throw new Error('Failed to read blob data');
+                    };
+                    reader.readAsDataURL(blob);
+                    return;
+                } catch (error) {
+                    console.warn('VSCode extension method failed, using browser download:', error);
+                }
+
+                // Fallback: Browser download
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = fileName;
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                // Clean up
+                setTimeout(() => {
+                    URL.revokeObjectURL(url);
+                }, 100);
+
+                const fileSize = (blob.size / 1024).toFixed(2);
+                AudioUtils.showStatus(`다운로드 완료: ${fileName} (${fileSize} KB)`, this.state.elements.status);
+                AudioUtils.log(`Region extracted and saved: ${fileName} (${fileSize} KB)`);
+                
+                // Show browser notification if available
+                if ('Notification' in window && Notification.permission === 'granted') {
+                    new Notification('오디오 저장 완료', {
+                        body: `${fileName}\n${fileSize} KB`,
+                        icon: '🎵'
                     });
-                    
-                    AudioUtils.showStatus(`저장 중... (${duration.toFixed(2)}초)`, this.state.elements.status);
-                };
-                reader.onerror = () => {
-                    throw new Error('Failed to read blob data');
-                };
-                reader.readAsDataURL(blob);
-                return;
-            } catch (error) {
-                console.warn('VSCode extension method failed, using browser download:', error);
-            }
-
-            // Fallback: Browser download
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = fileName;
-            link.style.display = 'none';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-
-            // Clean up
-            setTimeout(() => {
-                URL.revokeObjectURL(url);
-            }, 100);
-
-            const fileSize = (blob.size / 1024).toFixed(2);
-            AudioUtils.showStatus(`다운로드 완료: ${fileName} (${fileSize} KB)`, this.state.elements.status);
-            AudioUtils.log(`Region extracted and saved: ${fileName} (${fileSize} KB)`);
-            
-            // Show browser notification if available
-            if ('Notification' in window && Notification.permission === 'granted') {
-                new Notification('오디오 저장 완료', {
-                    body: `${fileName}\n${fileSize} KB`,
-                    icon: '🎵'
-                });
+                }
+            } finally {
+                await audioContext.close();
             }
 
         } catch (error) {
             console.error('Error extracting region:', error);
             AudioUtils.showStatus('Error extracting region: ' + error.message, this.state.elements.status);
         }
+    }
+
+    async dispose() {
+        window.removeEventListener('beforeunload', this.handleWindowUnload);
+        window.removeEventListener('pagehide', this.handleWindowUnload);
+        this.releaseAudioArrayBuffer();
+        this.visualizationManager?.dispose();
+        this.analysisWorkerManager?.dispose();
+        this.state.wavesurfer?.destroy();
+        await this.audioContextManager?.dispose();
+    }
+
+    handleWindowUnload() {
+        this.dispose().catch((error) => {
+            console.warn('Failed to dispose audio controller cleanly:', error);
+        });
     }
 
     audioBufferToWav(buffer) {

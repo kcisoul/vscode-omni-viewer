@@ -9,32 +9,45 @@ export class WaveSurferManager {
     }
 
     create() {
-        return WaveSurfer.create({
+        const wavesurfer = WaveSurfer.create({
             container: '#waveform',
-            waveColor: CONSTANTS.WAVESURFER.WAVE_COLOR,
-            progressColor: CONSTANTS.WAVESURFER.PROGRESS_COLOR,
-            cursorColor: CONSTANTS.WAVESURFER.CURSOR_COLOR,
+            waveColor: 'rgba(0, 0, 0, 0)',
+            progressColor: 'rgba(0, 0, 0, 0)',
+            cursorColor: 'transparent',
             barWidth: CONSTANTS.WAVESURFER.BAR_WIDTH,
             barRadius: CONSTANTS.WAVESURFER.BAR_RADIUS,
-            cursorWidth: CONSTANTS.WAVESURFER.CURSOR_WIDTH,
+            cursorWidth: 0,
             barGap: CONSTANTS.WAVESURFER.BAR_GAP,
             responsive: true,
             sampleRate: CONSTANTS.WAVESURFER.SAMPLE_RATE,
             normalize: true,
-            backend: 'WebAudio',
+            minPxPerSec: CONSTANTS.WAVESURFER.MIN_PX_PER_SEC,
             autoplay: false,
             mediaControls: false,
             hideScrollbar: false,
             interact: true,
             plugins: [
                 HoverPlugin.create({
-                    lineWidth: 2,
+                    lineWidth: 0,
                     labelBackground: '#000000',
                     labelColor: '#fff',
                     formatTimeCallback: AudioUtils.formatTime
                 })
             ]
         });
+
+        const mediaElement = wavesurfer.getMediaElement?.();
+        if (mediaElement) {
+            mediaElement.preload = 'auto';
+        }
+
+        return wavesurfer;
+    }
+
+    createPlaceholderPeaks(durationSec = 0, channelCount = 1) {
+        const seconds = Math.max(1, Math.ceil(durationSec || 1));
+        const peakCount = Math.max(256, seconds * 8);
+        return Array.from({ length: Math.max(1, channelCount) }, () => new Array(peakCount).fill(0));
     }
 
     getTimelineIntervals(durationSec) {

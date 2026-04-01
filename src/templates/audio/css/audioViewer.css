@@ -119,6 +119,19 @@ body {
     border-radius: 8px;
     padding: 10px;
     position: relative;
+    overflow: hidden;
+}
+
+.analysis-viewport {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    position: relative;
+}
+
+.analysis-content {
+    min-width: 100%;
+    position: relative;
 }
 
 #timeline {
@@ -131,7 +144,28 @@ body {
 
 #waveform {
     width: 100%;
-    background: var(--vscode-editor-background);
+    background: transparent;
+    min-height: 160px;
+    position: relative;
+    z-index: 2;
+}
+
+.waveform-shell {
+    position: relative;
+    min-height: 160px;
+    width: 100%;
+}
+
+.analysis-canvas-host {
+    position: relative;
+    width: 100%;
+}
+
+#waveformCanvasHost {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
 }
 
 #spectrogram {
@@ -140,12 +174,35 @@ body {
     border-radius: 4px;
     overflow: hidden;
     position: relative;
+    min-height: 250px;
 }
 
 #spectrogram canvas {
-    width: 100% !important;
     border-radius: 4px;
     display: block;
+}
+
+.analysis-tile {
+    position: absolute;
+    top: 0;
+}
+
+.waveform-tile {
+    top: 0;
+}
+
+.spectrogram-tile {
+    top: 0;
+}
+
+.playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: rgba(255, 255, 255, 0.8);
+    z-index: 4;
+    pointer-events: none;
 }
 
 #spectrogram .spectrogram-labels {

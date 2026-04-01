@@ -78,9 +78,17 @@
                     </div>
                 </div>
                 <div id="error" class="error" style="display: none;"></div>
-                <div id="timeline"></div>
-                <div id="waveform"></div>
-                <div id="spectrogram" style="display: none;"></div>
+                <div id="analysisViewport" class="analysis-viewport" style="display: none;">
+                    <div id="analysisContent" class="analysis-content">
+                        <div id="timeline"></div>
+                        <div class="waveform-shell">
+                            <div id="waveformCanvasHost" class="analysis-canvas-host"></div>
+                            <div id="playhead" class="playhead"></div>
+                            <div id="waveform"></div>
+                        </div>
+                        <div id="spectrogram" class="analysis-canvas-host"></div>
+                    </div>
+                </div>
                 <div id="status" class="status"></div>
             </div>
         </div>

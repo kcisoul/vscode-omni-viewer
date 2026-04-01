@@ -22,15 +22,27 @@ export class FileInfoManager {
 
     updateFileInfo() {
         try {
-            const decodedData = this.state.wavesurfer.getDecodedData();
+            const analysisMetadata = this.state.analysisWorkerManager?.getAnalysisMetadata?.() || null;
+            const decodedData = this.state.analysisWorkerManager?.getDecodedData()
+                || this.state.wavesurfer.getDecodedData();
             
             // Use server metadata if available, fallback to decoded data
-            const sampleRate = this.audioMetadata.sampleRate || (decodedData?.sampleRate || CONSTANTS.WAVESURFER.SAMPLE_RATE);
-            const channels = this.audioMetadata.channels || (decodedData?.numberOfChannels || 2);
-            const bitDepth = this.audioMetadata.bitDepth || (decodedData?.length > 0 ? (decodedData instanceof Float32Array ? 32 : 16) : '--');
+            const sampleRate = this.audioMetadata.sampleRate
+                || analysisMetadata?.sampleRate
+                || (decodedData?.sampleRate || CONSTANTS.WAVESURFER.SAMPLE_RATE);
+            const channels = this.audioMetadata.channels
+                || analysisMetadata?.numberOfChannels
+                || (decodedData?.numberOfChannels || 2);
+            const bitDepth = this.audioMetadata.bitDepth
+                || analysisMetadata?.bitDepth
+                || (decodedData?.length > 0 ? (decodedData instanceof Float32Array ? 32 : 16) : '--');
             const format = this.audioMetadata.format || this.detectFormat();
-            const fileSize = this.audioMetadata.fileSize || (decodedData ? this.estimateFileSize(decodedData) : '--');
-            const duration = this.audioMetadata.duration || (decodedData ? decodedData.length / sampleRate : '--');
+            const fileSize = this.audioMetadata.fileSize
+                || (analysisMetadata ? this.estimateFileSizeFromBytes(analysisMetadata.estimatedFileSize) : null)
+                || (decodedData ? this.estimateFileSize(decodedData) : '--');
+            const duration = this.audioMetadata.duration
+                || analysisMetadata?.duration
+                || (decodedData ? decodedData.length / sampleRate : '--');
 
             // Update UI elements
             this.state.elements.sampleRateInfo.textContent = sampleRate ? `${sampleRate} Hz` : '--';
@@ -55,13 +67,18 @@ export class FileInfoManager {
     estimateFileSize(decodedData) {
         if (!decodedData) return '--';
         const estimatedSize = decodedData.length * decodedData.numberOfChannels * 2;
+        return this.estimateFileSizeFromBytes(estimatedSize);
+    }
+
+    estimateFileSizeFromBytes(estimatedSize) {
+        if (!estimatedSize || estimatedSize <= 0) return '--';
         const sizeInKB = Math.round(estimatedSize / 1024);
         const sizeInMB = (estimatedSize / (1024 * 1024)).toFixed(1);
         return sizeInMB > 1 ? `${sizeInMB} MB` : `${sizeInKB} KB`;
     }
 
     detectFormat() {
-        const audioSrc = '{{audioSrc}}';
+        const audioSrc = this.audioMetadata.audioSrc || '';
         if (audioSrc.startsWith('data:')) {
             const match = audioSrc.match(/data:([^;]+)/);
             if (match) {
@@ -76,7 +93,7 @@ export class FileInfoManager {
                 }
                 return mimeType.split('/')[1]?.toUpperCase() || 'Unknown';
             }
-        } else {
+        } else if (audioSrc) {
             const extension = audioSrc.split('.').pop()?.toLowerCase();
             const formatMap = {
                 'mp3': 'MP3', 'wav': 'WAV', 'flac': 'FLAC',
@@ -84,6 +101,8 @@ export class FileInfoManager {
             };
             return formatMap[extension] || extension?.toUpperCase() || 'Unknown';
         }
-        return 'Unknown';
+        const fileName = this.audioMetadata.fileName || '';
+        const extension = fileName.split('.').pop()?.toLowerCase();
+        return extension ? extension.toUpperCase() : 'Unknown';
     }
 }

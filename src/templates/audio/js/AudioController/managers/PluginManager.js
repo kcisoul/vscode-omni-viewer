@@ -1,86 +1,11 @@
-import SpectrogramPlugin from '../../../../../../node_modules/wavesurfer.js/dist/plugins/spectrogram.js';
 import TimelinePlugin from '../../../../../../node_modules/wavesurfer.js/dist/plugins/timeline.js';
 import RegionsPlugin from '../../../../../../node_modules/wavesurfer.js/dist/plugins/regions.js';
-import { CONSTANTS } from '../utils/Constants.js';
 import { AudioUtils } from '../utils/AudioUtils.js';
 
 export class PluginManager {
     constructor(state, waveSurferManager) {
         this.state = state;
         this.waveSurferManager = waveSurferManager;
-    }
-
-    async setupSpectrogram() {
-        if (this.state.spectrogramPlugin) {
-            try {
-                this.state.wavesurfer.unregisterPlugin(this.state.spectrogramPlugin);
-                this.state.spectrogramPlugin = null;
-            } catch (error) {
-                console.warn('Error removing existing spectrogram plugin:', error);
-            }
-        }
-        
-        const spectrogramContainer = document.getElementById('spectrogram');
-        if (spectrogramContainer) {
-            spectrogramContainer.innerHTML = '';
-        }
-        
-        try {
-            this.state.spectrogramPlugin = this.state.wavesurfer.registerPlugin(SpectrogramPlugin.create({
-                container: '#spectrogram',
-                labels: true,
-                scale: CONSTANTS.SPECTROGRAM.DEFAULT_SCALE,
-                splitChannels: false,
-                fftSize: CONSTANTS.SPECTROGRAM.FFT_SIZE,
-                noverlap: CONSTANTS.SPECTROGRAM.NOVERLAP,
-                height: CONSTANTS.SPECTROGRAM.HEIGHT,
-            }));
-            AudioUtils.log('Spectrogram plugin registered successfully');
-        } catch (error) {
-            console.warn('Failed to register spectrogram plugin:', error);
-            this.state.spectrogramPlugin = null;
-        }
-    }
-
-    async changeSpectrogramScale(newScale) {
-        if (!this.state.spectrogramPlugin) {
-            console.warn('Spectrogram plugin not available');
-            return;
-        }
-
-        try {
-            // Unregister the current spectrogram plugin
-            this.state.wavesurfer.unregisterPlugin(this.state.spectrogramPlugin);
-            this.state.spectrogramPlugin = null;
-            
-            // Clear the spectrogram container
-            const spectrogramContainer = document.getElementById('spectrogram');
-            if (spectrogramContainer) {
-                spectrogramContainer.innerHTML = '';
-            }
-            
-            // Create new spectrogram plugin with new scale
-            this.state.spectrogramPlugin = this.state.wavesurfer.registerPlugin(SpectrogramPlugin.create({
-                container: '#spectrogram',
-                labels: true,
-                scale: newScale,
-                splitChannels: false,
-                fftSize: CONSTANTS.SPECTROGRAM.FFT_SIZE,
-                noverlap: CONSTANTS.SPECTROGRAM.NOVERLAP,
-                height: CONSTANTS.SPECTROGRAM.HEIGHT,
-            }));
-            
-            // Force render
-            setTimeout(() => {
-                if (this.state.spectrogramPlugin) {
-                    this.state.spectrogramPlugin.render();
-                }
-            }, 100);
-            
-            AudioUtils.log(`Spectrogram scale changed to: ${newScale}`);
-        } catch (error) {
-            console.warn('Failed to change spectrogram scale:', error);
-        }
     }
 
     async setupTimeline() {
@@ -143,6 +68,7 @@ export class PluginManager {
                 });
             }
             this.state.selectedRegionId = region.id;
+            this.state.pendingPlaybackTime = region.start;
             this.state.regionManager.showControls();
             
             setTimeout(() => {
@@ -152,6 +78,7 @@ export class PluginManager {
 
         this.state.regionsPlugin.on('region-clicked', (region) => {
             this.state.selectedRegionId = region.id;
+            this.state.pendingPlaybackTime = region.start;
             this.state.regionManager.showControls();
             this.state.regionManager.createOverlays(region);
         });

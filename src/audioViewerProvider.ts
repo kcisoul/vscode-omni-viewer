@@ -30,18 +30,30 @@ export class AudioViewerProvider implements vscode.CustomReadonlyEditorProvider 
         const audioFileName = path.basename(audioPath);
 
         try {
+            webviewPanel.webview.options = {
+                ...webviewPanel.webview.options,
+                localResourceRoots: [
+                    ...(webviewPanel.webview.options.localResourceRoots || []),
+                    vscode.Uri.file(path.dirname(audioPath)),
+                    audioUri
+                ]
+            };
+
             if (await rerouteIfNeeded(audioUri, AudioViewerProvider.viewType, webviewPanel)) {
                 return;
             }
 
-            const mimeType = FileUtils.getAudioMimeType(audioPath);
-            const audioData = await FileUtils.fileToDataUrl(audioPath, mimeType);
             const metadata = await FileUtils.getAudioMetadata(audioPath);
+            const audioSrc = webviewPanel.webview.asWebviewUri(audioUri).toString();
 
             const html = await TemplateUtils.loadTemplate(this.context, 'audio/audioViewer.html', {
                 fileName: audioFileName,
-                audioSrc: audioData,
-                metadata: JSON.stringify(metadata)
+                audioSrc,
+                metadata: JSON.stringify({
+                    ...metadata,
+                    fileName: audioFileName,
+                    audioSrc
+                })
             });
 
             webviewPanel.webview.html = html;

@@ -242,23 +242,24 @@ export class RegionManager {
         }
         
         const regions = this.state.regionsPlugin.getRegions();
-        
-        if (!regions || Object.keys(regions).length === 0) {
+        const regionList = Array.isArray(regions)
+            ? regions
+            : Object.values(regions || {});
+
+        if (!regionList.length) {
             return null;
         }
-        
-        if (this.state.selectedRegionId && regions[this.state.selectedRegionId]) {
-            const region = regions[this.state.selectedRegionId];
-            return region;
+
+        if (this.state.selectedRegionId) {
+            const selectedRegion = regionList.find((region) => region.id === this.state.selectedRegionId);
+            if (selectedRegion) {
+                return selectedRegion;
+            }
         }
-        
-        const regionIds = Object.keys(regions);
-        if (regionIds.length > 0) {
-            const lastRegion = regions[regionIds[regionIds.length - 1]];
-            this.state.selectedRegionId = lastRegion.id;
-            return lastRegion;
-        }
-        return null;
+
+        const lastRegion = regionList[regionList.length - 1];
+        this.state.selectedRegionId = lastRegion.id;
+        return lastRegion;
     }
 
     clearAllRegions() {
@@ -285,6 +286,8 @@ export class RegionManager {
         
         // Clear state
         this.state.selectedRegionId = null;
+        this.state.activePlaybackRegion = null;
+        this.state.pendingPlaybackTime = 0;
         this.removeOverlays();
         this.hideControls();
         
@@ -313,6 +316,8 @@ export class RegionManager {
         
         // Clear state
         this.state.selectedRegionId = null;
+        this.state.activePlaybackRegion = null;
+        this.state.pendingPlaybackTime = 0;
         this.removeOverlays();
         this.hideControls();
         
